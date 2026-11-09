@@ -1,70 +1,191 @@
----
-// Bookmarks component (scaffold).
-//
-// The markup below renders during the static build. The dynamic behavior —
-// adding a bookmark, generating a short slug, and persisting to the browser —
-// must run ONLY in the client-side <script> boundary at the bottom of this
-// file. Astro runs that script in the browser, never during the build, so
-// browser-only APIs are safe there.
-//
-// You will implement the behavior in Step 3.
----
-<form id="add-bookmark">
-  <div class="field">
-    <label for="url">Link to save</label>
-    <input
-      id="url"
-      name="url"
-      type="text"
-      inputmode="url"
-      autocomplete="off"
-      spellcheck="false"
-      placeholder="https://example.com"
-      required
-    />
+<section class="bookmark-manager" aria-label="Bookmark manager">
+  <form id="add-bookmark">
+    <div class="field">
+      <label for="url">Link to save</label>
+      <input
+        id="url"
+        name="url"
+        type="text"
+        inputmode="url"
+        autocomplete="url"
+        spellcheck="false"
+        placeholder="example.com"
+        required
+      />
+    </div>
+    <button type="submit">Add bookmark</button>
+  </form>
+
+  <p class="hint">Paste a URL with or without <code>https://</code> to create a short <code>mona-</code> slug.</p>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+
+  <p id="empty-state" class="empty">No bookmarks yet — add your first link above.</p>
+
+  <div id="list-header" hidden>
+    <h2 class="list-title">Saved bookmarks</h2>
+    <button id="clear-all" type="button" class="clear">Clear all</button>
   </div>
-  <button type="submit">Add bookmark</button>
-</form>
 
-<p class="hint">Paste a URL and select <strong>Add bookmark</strong> to generate its short <code>mona-</code> slug.</p>
+  <ul id="bookmark-list" aria-label="Saved bookmarks" aria-live="polite"></ul>
+</section>
 
-<p id="empty-state" class="empty">No bookmarks yet — add your first link above.</p>
+<style>
+  .bookmark-manager {
+    padding: 1.25rem;
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+    border-radius: 1rem;
+    background: color-mix(in srgb, var(--accent) 4%, Canvas);
+    box-shadow: 0 1rem 2.5rem color-mix(in srgb, currentColor 7%, transparent);
+  }
 
-<div id="list-header" hidden>
-  <h2 class="list-title">Saved bookmarks</h2>
-  <button id="clear-all" type="button" class="clear">Clear all</button>
-</div>
+  form { margin-top: 0; }
+  input { min-width: 0; background: color-mix(in srgb, Canvas 85%, transparent); }
+  form button { box-shadow: 0 0.25rem 0.75rem color-mix(in srgb, var(--accent) 25%, transparent); }
+  .hint code { color: var(--accent); }
+  .status { min-height: 1.25rem; margin: 0 0 0.5rem; font-size: 0.8rem; color: var(--muted); }
+  .status[data-error="true"] { color: #d33; }
+  .empty { background: color-mix(in srgb, Canvas 60%, transparent); }
+  #bookmark-list { margin-top: 0.75rem; }
+  #bookmark-list :global(.bookmark-row) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, Canvas 75%, transparent);
+  }
+  #bookmark-list :global(.bookmark-url) { min-width: 0; flex: 1 1 12rem; overflow-wrap: anywhere; }
+  #bookmark-list :global(.bookmark-separator) { white-space: pre; color: var(--muted); }
+  #bookmark-list :global(.bookmark-slug) {
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  #bookmark-list :global(.copy) {
+    padding: 0.3rem 0.6rem;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: inherit;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+  #bookmark-list :global(.copy:hover) { border-color: currentColor; }
 
-<ul id="bookmark-list" aria-label="Saved bookmarks" aria-live="polite">
-  <!-- Bookmarks render here in the browser. -->
-</ul>
+  @media (max-width: 34rem) {
+    .bookmark-manager { padding: 1rem; }
+    form button { width: 100%; }
+  }
+</style>
 
 <script>
-  // CLIENT-SIDE BOUNDARY — runs in the browser only.
-  //
-  // TODO (Step 3): implement the bookmarks feature here.
-  //   1. On form submit, call event.preventDefault() FIRST so the page
-  //      never reloads, then read and validate the original URL.
-  //   2. Generate a short slug with a "mona-" prefix (for example, base62
-  //      of a counter or hash → "mona-7fk2").
-  //   3. Save the original URL and its slug, then persist them in the browser.
-  //   4. Render each saved bookmark into #bookmark-list as a row (li.bookmark) with:
-  //        - the original URL as a link (.url) that opens in a new tab,
-  //        - its short slug shown as a badge (.slug), and
-  //        - a "Copy" button (.copy) that copies the slug.
-  //   5. Toggle empty vs. saved state: hide #empty-state and show #list-header
-  //      (the "Saved bookmarks" heading + "Clear all" button) once at least one
-  //      bookmark exists; reverse it when the list is empty.
-  //   6. Wire the #clear-all button to remove every saved bookmark (clear the
-  //      list, clear browser storage) after a quick confirm.
-  //   7. On page load, read the saved bookmarks from storage and render
-  //      them so the list persists across reloads.
-  //
-  // Because this code lives in a client <script>, browser storage APIs are
-  // safe to use here without breaking the static build.
+  import { formatBookmark, makeBookmarkSlug, normalizeBookmarkUrl, readStoredBookmarks } from '../lib/bookmarks.js';
+
+  const storageKey = 'mona-bookmarks';
   const form = document.getElementById('add-bookmark');
-  form?.addEventListener('submit', (event) => {
-    event.preventDefault(); // keep this — stops the page from reloading
-    // Implement in Step 3.
+  const urlInput = document.getElementById('url');
+  const list = document.getElementById('bookmark-list');
+  const emptyState = document.getElementById('empty-state');
+  const listHeader = document.getElementById('list-header');
+  const status = document.getElementById('status');
+  let bookmarks = readStoredBookmarks(readStorage());
+
+  function readStorage() {
+    try {
+      return window.localStorage.getItem(storageKey);
+    } catch {
+      return null;
+    }
+  }
+
+  function showStatus(message, isError = false) {
+    status.textContent = message;
+    if (isError) status.dataset.error = 'true';
+    else delete status.dataset.error;
+  }
+
+  function saveBookmarks(nextBookmarks) {
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(nextBookmarks));
+      return true;
+    } catch {
+      showStatus('Could not save bookmarks in this browser. Check storage permissions and try again.', true);
+      return false;
+    }
+  }
+
+  function renderBookmarks() {
+    list.replaceChildren();
+    for (const bookmark of bookmarks) {
+      const item = document.createElement('li');
+      item.className = 'bookmark-row';
+
+      const link = document.createElement('a');
+      link.className = 'bookmark-url';
+      link.href = bookmark.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = bookmark.url;
+
+      const separator = document.createElement('span');
+      separator.className = 'bookmark-separator';
+      separator.textContent = ' :: ';
+
+      const slug = document.createElement('code');
+      slug.className = 'bookmark-slug';
+      slug.textContent = bookmark.slug;
+
+      const copyButton = document.createElement('button');
+      copyButton.className = 'copy';
+      copyButton.type = 'button';
+      copyButton.textContent = 'Copy';
+      copyButton.setAttribute('aria-label', `Copy ${bookmark.slug}`);
+      copyButton.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(bookmark.slug);
+          showStatus(`Copied ${bookmark.slug}.`);
+        } catch {
+          showStatus('Could not copy the slug. Check clipboard permissions and try again.', true);
+        }
+      });
+
+      item.append(link, separator, slug, copyButton);
+      list.append(item);
+    }
+
+    const hasBookmarks = bookmarks.length > 0;
+    emptyState.hidden = hasBookmarks;
+    listHeader.hidden = !hasBookmarks;
+  }
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    try {
+      const url = normalizeBookmarkUrl(urlInput.value);
+      const slug = makeBookmarkSlug(bookmarks.map((bookmark) => bookmark.slug));
+      const nextBookmarks = [...bookmarks, { url, slug }];
+      if (!saveBookmarks(nextBookmarks)) return;
+      bookmarks = nextBookmarks;
+      renderBookmarks();
+      urlInput.value = '';
+      showStatus(`Saved ${formatBookmark({ url, slug })}.`);
+    } catch (error) {
+      showStatus(error instanceof Error ? error.message : 'Could not add that bookmark.', true);
+    }
   });
+
+  document.getElementById('clear-all').addEventListener('click', () => {
+    if (!window.confirm('Clear all saved bookmarks from this device?')) return;
+    try {
+      window.localStorage.removeItem(storageKey);
+      bookmarks = [];
+      renderBookmarks();
+      showStatus('All bookmarks cleared.');
+    } catch {
+      showStatus('Could not clear bookmarks from this browser. Check storage permissions and try again.', true);
+    }
+  });
+
+  renderBookmarks();
 </script>
